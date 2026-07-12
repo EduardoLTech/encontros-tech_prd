@@ -1,0 +1,284 @@
+{% extends "base.html" %}
+
+{% block title %}{{ event.title }} - Encontros Tech{% endblock %}
+
+{% block extra_head %}
+<style>
+.event-detail-header {
+    background: linear-gradient(135deg, var(--primary-blue) 0%, var(--secondary-purple) 100%);
+    color: white;
+    padding: 4rem 0;
+    margin-bottom: 2rem;
+    position: relative;
+    overflow: hidden;
+}
+
+.event-detail-header::before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: repeating-linear-gradient(
+        45deg,
+        transparent,
+        transparent 20px,
+        rgba(255, 255, 255, 0.1) 20px,
+        rgba(255, 255, 255, 0.1) 40px
+    );
+    animation: move-pattern 30s linear infinite;
+}
+
+@keyframes move-pattern {
+    0% { transform: translate(-50%, -50%) rotate(0deg); }
+    100% { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+.event-detail-content {
+    position: relative;
+    z-index: 2;
+}
+
+.event-detail-icon {
+    font-size: 4rem;
+    margin-bottom: 1rem;
+    opacity: 0.9;
+}
+
+.breadcrumb-modern {
+    background: var(--white);
+    border-radius: var(--border-radius-lg);
+    box-shadow: var(--shadow-sm);
+    padding: var(--spacing-md) var(--spacing-lg);
+    margin-bottom: var(--spacing-lg);
+}
+
+.breadcrumb-modern .breadcrumb {
+    margin-bottom: 0;
+}
+
+.breadcrumb-modern .breadcrumb-item + .breadcrumb-item::before {
+    content: "›";
+    color: var(--gray-500);
+}
+
+.info-card {
+    background: var(--white);
+    border-radius: var(--border-radius-lg);
+    box-shadow: var(--shadow-md);
+    padding: var(--spacing-xl);
+    margin-bottom: var(--spacing-lg);
+}
+
+.info-item {
+    display: flex;
+    align-items: center;
+    padding: var(--spacing-md) 0;
+    border-bottom: 1px solid var(--gray-200);
+}
+
+.info-item:last-child {
+    border-bottom: none;
+}
+
+.info-item i {
+    font-size: 1.25rem;
+    color: var(--primary-blue);
+    width: 2rem;
+    margin-right: var(--spacing-md);
+}
+
+.section-title {
+    color: var(--gray-900);
+    font-weight: 600;
+    margin-bottom: var(--spacing-lg);
+    padding-bottom: var(--spacing-sm);
+    border-bottom: 3px solid var(--primary-blue);
+    display: inline-block;
+}
+
+.tech-badge-large {
+    display: inline-block;
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    border-radius: var(--border-radius-md);
+    margin-right: var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.action-buttons {
+    position: sticky;
+    top: 2rem;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<div class="breadcrumb-modern">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item">
+                <a href="/" class="text-decoration-none">
+                    <i class="bi bi-house me-1"></i>
+                    Início
+                </a>
+            </li>
+            <li class="breadcrumb-item active" aria-current="page">{{ event.title[:50] }}{% if event.title|length > 50 %}...{% endif %}</li>
+        </ol>
+    </nav>
+</div>
+
+<!-- Header do Evento -->
+<div class="event-detail-header">
+    <div class="container">
+        <div class="event-detail-content text-center">
+            <!-- Ícone padrão para eventos -->
+            <div class="event-detail-icon">
+                <i class="bi bi-calendar-event"></i>
+            </div>
+            
+            <h1 class="display-4 fw-bold mb-3">{{ event.title }}</h1>
+            <p class="lead mb-4">
+                <i class="bi bi-calendar3 me-2"></i>
+                {{ event.date.strftime('%d de %B de %Y às %H:%M') }}
+            </p>
+            <p class="h5 mb-0">
+                <i class="bi bi-geo-alt me-2"></i>
+                {{ event.location }}
+            </p>
+        </div>
+    </div>
+</div>
+
+<!-- Conteúdo Principal -->
+<div class="container">
+    <div class="row">
+        <!-- Coluna Principal -->
+        <div class="col-lg-8">
+            <!-- Informações Básicas -->
+            <div class="info-card">
+                <h3 class="section-title">
+                    <i class="bi bi-info-circle me-2"></i>
+                    Informações do Evento
+                </h3>
+                
+                <div class="info-item">
+                    <i class="bi bi-calendar-event"></i>
+                    <div>
+                        <strong>Data e Hora</strong><br>
+                        <span class="text-muted">{{ event.date.strftime('%d/%m/%Y às %H:%M') }}</span>
+                    </div>
+                </div>
+                
+                <div class="info-item">
+                    <i class="bi bi-geo-alt"></i>
+                    <div>
+                        <strong>Local</strong><br>
+                        <span class="text-muted">{{ event.location }}</span>
+                    </div>
+                </div>
+                
+                <div class="info-item">
+                    <i class="bi bi-person"></i>
+                    <div>
+                        <strong>Organizador</strong><br>
+                        <span class="text-muted">{{ event.organizer.name if event.organizer else 'N/A' }}</span>
+                    </div>
+                </div>
+                
+
+              
+                
+            </div>
+
+            <!-- Descrição -->
+            <div class="info-card">
+                <h3 class="section-title">
+                    <i class="bi bi-file-text me-2"></i>
+                    Sobre o Evento
+                </h3>
+                <div class="text-muted" style="line-height: 1.7; font-size: 1.1rem;">
+                    {{ event.description|replace('\n', '<br>')|safe if event.description else 'Sem descrição disponível.' }}
+                </div>
+            </div>
+
+            
+        </div>
+
+        <!-- Sidebar com Ações -->
+        <div class="col-lg-4">
+            <div class="action-buttons">
+                <!-- Card de Ação Principal -->
+                <div class="info-card text-center">
+                    <p class="text-muted mb-4">Este é um evento gratuito e aberto para toda a comunidade tech!</p>
+                    
+                    <a href="/" class="btn btn-primary-modern w-100 mb-3">
+                        <i class="bi bi-arrow-left me-2"></i>
+                        Voltar aos Eventos
+                    </a>
+                </div>
+
+                <!-- Informações Adicionais -->
+                <div class="info-card">
+                    <h5 class="mb-3">
+                        <i class="bi bi-info-square me-2"></i>
+                        Informações Importantes
+                    </h5>
+                    
+                    <div class="d-flex align-items-center mb-2">
+                        <i class="bi bi-clock text-primary me-2"></i>
+                        <small class="text-muted">Evento gratuito</small>
+                    </div>
+                    
+                    <div class="d-flex align-items-center mb-2">
+                        <i class="bi bi-people text-success me-2"></i>
+                        <small class="text-muted">Aberto ao público</small>
+                    </div>
+                    
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-calendar-check text-warning me-2"></i>
+                        <small class="text-muted">Vagas limitadas</small>
+                    </div>
+                </div>
+
+                <!-- Outros Eventos -->
+                <div class="info-card">
+                    <h5 class="mb-3">
+                        <i class="bi bi-calendar-range me-2"></i>
+                        Explore Mais
+                    </h5>
+                    <a href="/" class="btn btn-secondary-modern w-100 mb-2">
+                        <i class="bi bi-list me-2"></i>
+                        Ver Todos os Eventos
+                    </a>
+                    <a href="/events/new" class="btn btn-outline-modern w-100">
+                        <i class="bi bi-plus-circle me-2"></i>
+                        Criar Evento
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Scripts específicos da página -->
+{% block extra_scripts %}
+<script>
+
+// Adicionar smooth scroll para links internos
+document.addEventListener('DOMContentLoaded', function() {
+    // Adicionar animação fade-in
+    const elements = document.querySelectorAll('.info-card');
+    elements.forEach((el, index) => {
+        el.style.animationDelay = `${index * 0.1}s`;
+        el.classList.add('fade-in');
+    });
+});
+</script>
+{% endblock %}
+{% endblock %}

@@ -1,0 +1,159 @@
+### Arquivo REST Client para Popular Eventos - Encontros Tech
+### Base URL da aplicação
+@baseUrl = http://localhost:8000
+
+### Cabeçalhos comuns
+@contentType = application/json
+
+### ============================================
+### CRIAÇÃO DE EVENTOS
+### ============================================
+
+### 1. Workshop: Introdução ao FastAPI
+POST {{baseUrl}}/api/events/
+Content-Type: {{contentType}}
+
+{
+  "title": "Workshop: Introdução ao FastAPI",
+  "description": "Aprenda a criar APIs REST modernas com FastAPI, incluindo documentação automática, validação de dados e deploy em produção.",
+  "date": "2024-02-15T19:00:00",
+  "location": "Centro de Convenções - São Paulo, SP",
+  "technologies": ["Python", "FastAPI", "REST API", "Swagger"]
+}
+
+### 2. Meetup: React + Next.js
+POST {{baseUrl}}/api/events/
+Content-Type: {{contentType}}
+
+{
+  "title": "Meetup React: Performance com Next.js 14",
+  "description": "Discussão sobre otimização de performance em aplicações React usando as novas funcionalidades do Next.js 14.",
+  "date": "2024-02-20T18:30:00",
+  "location": "Hub de Inovação - Rio de Janeiro, RJ",
+  "technologies": ["JavaScript", "React", "Next.js", "Frontend"]
+}
+
+### 3. Conferência DevOps
+POST {{baseUrl}}/api/events/
+Content-Type: {{contentType}}
+
+{
+  "title": "DevOps Conference 2024: Kubernetes na Prática",
+  "description": "Evento focado em práticas DevOps modernas, com palestras sobre Kubernetes, CI/CD, monitoramento e observabilidade.",
+  "date": "2024-03-05T09:00:00",
+  "location": "Expo Center Norte - São Paulo, SP",
+  "technologies": ["Kubernetes", "Docker", "CI/CD", "DevOps", "Prometheus", "Grafana"]
+}
+
+### 4. Hackathon Mobile
+POST {{baseUrl}}/api/events/
+Content-Type: {{contentType}}
+
+{
+  "title": "Hackathon Mobile: Apps para Sustentabilidade",
+  "description": "48 horas de desenvolvimento intensivo para criar aplicativos móveis que promovam sustentabilidade e consciência ambiental.",
+  "date": "2024-02-25T08:00:00",
+  "location": "Campus Universitário - Belo Horizonte, MG",
+  "technologies": ["React Native", "Flutter", "Mobile", "Sustainability"]
+}
+
+### 5. Palestra: Inteligência Artificial
+POST {{baseUrl}}/api/events/
+Content-Type: {{contentType}}
+
+{
+  "title": "IA na Prática: Machine Learning com Python",
+  "description": "Como implementar soluções de Machine Learning em produção usando Python, scikit-learn e TensorFlow.",
+  "date": "2024-03-10T14:00:00",
+  "location": "Auditório Tech Hub - Brasília, DF",
+  "technologies": ["Python", "Machine Learning", "TensorFlow", "Scikit-learn", "AI"]
+}
+
+### 6. Workshop Cloud Computing
+POST {{baseUrl}}/api/events/
+Content-Type: {{contentType}}
+
+{
+  "title": "AWS na Prática: Serverless com Lambda",
+  "description": "Workshop hands-on sobre desenvolvimento serverless na AWS usando Lambda, API Gateway e DynamoDB.",
+  "date": "2024-03-15T10:00:00",
+  "location": "Centro de Treinamento - Porto Alegre, RS",
+  "technologies": ["AWS", "Lambda", "Serverless", "DynamoDB", "Cloud"]
+}
+
+### 7. Meetup Banco de Dados
+POST {{baseUrl}}/api/events/
+Content-Type: {{contentType}}
+
+{
+  "title": "PostgreSQL Avançado: Otimização e Performance",
+  "description": "Técnicas avançadas de otimização em PostgreSQL, incluindo índices, particionamento e análise de performance.",
+  "date": "2024-02-28T19:30:00",
+  "location": "Coworking Space - Florianópolis, SC",
+  "technologies": ["PostgreSQL", "Database", "SQL", "Performance"]
+}
+
+### 8. Evento Cybersecurity
+POST {{baseUrl}}/api/events/
+Content-Type: {{contentType}}
+
+{
+  "title": "Cybersecurity Summit: Proteção de APIs",
+  "description": "Estratégias para proteger APIs REST contra ataques comuns, incluindo autenticação, autorização e monitoramento.",
+  "date": "2024-03-20T13:00:00",
+  "location": "Centro Empresarial - Curitiba, PR",
+  "technologies": ["Security", "API Security", "JWT", "OAuth", "Cybersecurity"]
+}
+
+### 9. Workshop Frontend
+POST {{baseUrl}}/api/events/
+Content-Type: {{contentType}}
+
+{
+  "title": "Modern Frontend: Vue.js 3 + TypeScript",
+  "description": "Desenvolvimento de aplicações frontend modernas com Vue.js 3, Composition API e TypeScript.",
+  "date": "2024-04-05T15:00:00",
+  "location": "Innovation Lab - Salvador, BA",
+  "technologies": ["Vue.js", "TypeScript", "Frontend", "JavaScript"]
+}
+
+### 10. Conferência Blockchain
+POST {{baseUrl}}/api/events/
+Content-Type: {{contentType}}
+
+{
+  "title": "Blockchain & Web3: Desenvolvimento de DApps",
+  "description": "Introdução ao desenvolvimento de aplicações descentralizadas (DApps) usando Solidity e frameworks Web3.",
+  "date": "2024-04-10T11:00:00",
+  "location": "Tech Park - Recife, PE",
+  "technologies": ["Blockchain", "Solidity", "Web3", "DApps", "Ethereum"]
+}
+
+### ============================================
+### CONSULTAS E FILTROS
+### ============================================
+
+### Listar todos os eventos
+GET {{baseUrl}}/api/events/
+
+### Buscar eventos por termo
+GET {{baseUrl}}/api/events/?search=Python
+
+### Buscar eventos com paginação
+GET {{baseUrl}}/api/events/?skip=0&limit=5
+
+### Buscar eventos específicos
+GET {{baseUrl}}/api/events/?search=Workshop
+
+### Buscar eventos por localização
+GET {{baseUrl}}/api/events/?search=São Paulo
+
+### ============================================
+### DOCUMENTAÇÃO DA API
+### ============================================
+
+### Acessar documentação Swagger
+GET {{baseUrl}}/docs
+
+### Acessar documentação ReDoc
+GET {{baseUrl}}/redoc

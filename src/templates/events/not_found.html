@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block title %}Evento Não Encontrado - Encontros Tech{% endblock %}
+
+{% block content %}
+    <div class="row justify-content-center">
+        <div class="col-md-6 text-center">
+            <div class="card-modern">
+                <div class="card-body py-5">
+                    <i class="bi bi-exclamation-triangle text-warning" style="font-size: 3rem;"></i>
+                    <h3 class="mt-3">Evento Não Encontrado</h3>
+                    <p class="text-muted">
+                        O link de edição não é válido ou o evento não existe mais.
+                    </p>
+                    <a href="/" class="btn-modern btn-primary-modern">Voltar para Lista de Eventos</a>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endblock %}
