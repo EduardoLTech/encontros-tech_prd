@@ -8,7 +8,7 @@
 | Dimensão | Valor |
 |---|---|
 | Linguagem principal | Python |
-| Runtime/plataforma | Gunicorn como servidor de aplicação **em produção e em desenvolvimento** (dev espelha produção, com recarga automática + montagem do código-fonte); execução containerizada em Docker sobre imagem base oficial slim do Python na mesma versão usada localmente, como usuário **não-root** (ADR 001) |
+| Runtime/plataforma | Gunicorn como servidor de aplicação **em produção e em desenvolvimento** (dev espelha produção, com recarga automática + montagem do código-fonte); execução containerizada em Docker sobre imagem base oficial `python:3.12-slim`, como usuário **não-root** (ADR 001) |
 | Framework principal | Flask 3.0.0 |
 | Banco de dados | PostgreSQL (via SQLAlchemy 2.0.43 + psycopg2-binary) |
 | Ferramentas de build | Build de imagem Docker **multi-stage**: estágio de build compila as dependências (inclusive sem artefatos pré-compilados), estágio final recebe só o runtime; separa dependências de runtime das de teste (ADR 001) |
@@ -19,7 +19,7 @@
 ### Padrão arquitetural
 Camadas: router (blueprints Flask) → service (`event_service`) → model (SQLAlchemy ORM). Os routers tratam HTTP e validação via schemas Pydantic; a lógica de acesso a dados fica isolada na camada de service.
 
-A aplicação é **stateless**: não mantém estado no processo/nó — o estado persistente reside integralmente no banco externo (Amazon RDS) —, o que permite replicá-la horizontalmente como recurso descartável (ADR 002). O empacotamento é feito como **imagem única de container** (Dockerfile multi-stage na raiz do projeto), executada sob Gunicorn; um `docker-compose.yml` orquestra essa mesma imagem junto de um serviço PostgreSQL para compor o ambiente de desenvolvimento, deliberadamente espelhando produção (ADR 001).
+A aplicação é **stateless**: não mantém estado no processo/nó — o estado persistente reside no PostgreSQL, que roda dentro do próprio cluster (`StatefulSet` + `PersistentVolumeClaim`), o que permite replicar a **aplicação** horizontalmente como recurso descartável (ADR 002/003). O empacotamento é feito como **imagem única de container** (Dockerfile multi-stage na raiz do projeto), executada sob Gunicorn; um `docker-compose.yml` orquestra essa mesma imagem junto de um serviço PostgreSQL para compor o ambiente de desenvolvimento, deliberadamente espelhando produção (ADR 001). A implantação em cluster é descrita por um manifesto único versionado em `k8s/manifesto.yaml` (Namespace, ServiceAccount, ConfigMap, Deployment/Service da aplicação, StatefulSet/Service/PVC do Postgres), aplicável com um único `kubectl apply` (change `manifesto-kubernetes`, ADR 003).
 
 ### Estrutura de pastas dominante
 ```
@@ -29,10 +29,19 @@ src/
 ├── schemas/     # schemas Pydantic (validação/serialização)
 ├── services/    # lógica de negócio e acesso a dados
 ├── routers/     # blueprints Flask (API e páginas)
+├── scripts/     # scripts operacionais standalone (executados fora do ciclo de vida da app)
 ├── templates/   # templates Jinja2 (HTML)
 ├── static/      # assets estáticos (css, js)
 └── tests/       # testes com pytest
 ```
+
+**Scripts operacionais.** `src/scripts/` guarda código executável que não é `core`, `service` nem
+`router`: roda por invocação explícita, nunca pelo boot da aplicação. Entra na imagem pelo `COPY src/`
+já existente e é invocado como módulo:
+
+| Script | Comando | Efeito |
+|---|---|---|
+| `seed_events` | `docker compose exec app python -m scripts.seed_events` | popula `events` com o catálogo inicial de 10 eventos **somente se a tabela estiver vazia**; caso contrário é no-op. Assume o schema já criado — não roda migrations (change `seed-eventos-iniciais`, PRD-0002) |
 
 ### Módulos / camadas principais
 
@@ -59,6 +68,13 @@ src/
 | GET | `/api/events/by-token/<edit_token>` | `api_router.get_event_by_token` |
 | PUT | `/api/events/by-token/<edit_token>` | `api_router.update_event` |
 
+As respostas da API são derivadas do schema Pydantic `schemas.event.Event` — o router converte o
+objeto ORM com `model_validate` antes de serializar; objeto ORM nunca é serializado direto. O campo
+`date` trafega em **ISO 8601** nos dois sentidos: é o formato aceito no corpo das requisições e o
+devolvido nas respostas (`model_dump(mode="json")`, e não o RFC 822 que o `jsonify` do Flask
+aplicaria a um `datetime`). O campo `technologies` consta do contrato com default `[]` e **não é
+persistido** — não há coluna correspondente em `models/event.py`.
+
 **Páginas**
 
 | Método | Rota | Handler |
@@ -83,23 +99,23 @@ src/
 | location | String | — |
 | edit_token | String | unique, index, default `uuid4()` |
 
-> Schema criado por `create_all` na inicialização, sem ferramenta de migração. Com a escala horizontal em múltiplas réplicas (ADR 002), a criação no boot vira **corrida entre réplicas** — dívida conhecida registrada nas ADRs 001/002, ainda sem decisão.
+> Schema criado por `create_all` na inicialização, sem ferramenta de migração. Com a escala horizontal em múltiplas réplicas (ADR 002), a criação no boot vira **corrida entre réplicas** — dívida conhecida registrada nas ADRs 001/002, ainda sem decisão. Em desenvolvimento, o `depends_on: condition: service_healthy` do `docker-compose.yml` evita que a aplicação suba antes do banco estar pronto; em **Kubernetes não existe equivalente** — se o Postgres em cluster estiver indisponível quando um pod da aplicação é (re)agendado (por exemplo, `postgres-0` ainda remontando o `PersistentVolumeClaim` após reciclo de nó), `create_all` falha em tempo de import, o processo morre antes de existir servidor HTTP (nenhuma probe participa) e o kubelet reinicia em `CrashLoopBackOff` até o banco voltar; com a réplica única do manifesto atual — agora também no Postgres, sem o failover automático que o RDS Multi-AZ dava (ADR 003) —, isso é a aplicação inteira fora do ar (change `manifesto-kubernetes`).
 
 ## Requisitos Não-Funcionais
 
 | Dimensão | Requisito |
 |---|---|
-| Performance | Acesso ao banco cross-AZ entre nós EKS e primário RDS com latência desprezível (~1–2 ms) e custo mínimo de transferência entre AZs (ADR 002). Demais metas: não definido |
-| Disponibilidade/SLA | HA na camada de aplicação: múltiplas réplicas de pod distribuídas por **3 AZs** (spread via `topologySpreadConstraints`/anti-affinity), sobreviventes à perda de um nó ou de uma AZ. Camada de dados em **Amazon RDS Multi-AZ**, standby síncrono e **failover automático** (primário e standby em AZs distintas). Durante o failover, a indisponibilidade transitória do banco é absorvida pelo contrato de readiness do PRD Health & Readiness: `/ready` → 503 retira a instância da rotação sem reiniciá-la, readmitindo-a ao voltar 200. SLA numérico: não definido (ADR 002) |
-| Escalabilidade | Escala horizontal na **camada de pod** (múltiplas réplicas + HPA), aproveitando a natureza stateless da aplicação; execução em **Amazon EKS** com **Managed Node Groups** `t3.small` (x86), mínimo de **1 nó por AZ** em 3 AZs. Sob empilhamento de réplicas, o caminho é adicionar nós (escala horizontal), não verticalizar — os 2 GB do `t3.small` são partilhados entre overhead do EKS e os pods. Escalar a aplicação **não** escala o banco: o RDS tem primário único legível, que é o teto de throughput de dados; mais réplicas × workers Gunicorn pressionam o `max_connections` do RDS — mitigação por pool de conexões (ex.: pgbouncer) pendente e fora do escopo das ADRs. Autoscaling de nós (Cluster Autoscaler/Karpenter) ainda não decidido. Mantém-se o suporte a multiprocessing via Gunicorn, com métricas Prometheus em diretório multiproc (`PROMETHEUS_MULTIPROC_DIR`) (ADR 002) |
-| Segurança | Container executa como **usuário não-root**, reduzindo a superfície de ataque (ADR 001). Conectividade ao RDS em subnets privadas, com Security Group liberando os nós do EKS na porta 5432 — premissa de rede a detalhar no material de deploy (ADR 002). **Dívida conhecida (não endereçada pelas ADRs):** segredo de aplicação fixado no código-fonte. Demais controles: não definido |
-| Observabilidade | Logging estruturado em stdout (nível configurável via `LOG_LEVEL`) e métricas Prometheus expostas via `prometheus-flask-exporter` |
+| Performance | Acesso ao banco intra-cluster (Service interno na 5432, sem tráfego cross-AZ para fora do cluster) — o Postgres roda no próprio EKS desde a ADR 003. Demais metas: não definido |
+| Disponibilidade/SLA | HA na camada de aplicação: múltiplas réplicas de pod distribuídas por **3 AZs** (spread via `topologySpreadConstraints`/anti-affinity), sobreviventes à perda de um nó ou de uma AZ — alvo da ADR 002, que segue valendo para o compute. Camada de dados: **PostgreSQL em `StatefulSet` dentro do cluster** (ADR 003, substitui o RDS Multi-AZ) — **sem failover automático nem standby síncrono**; perda do nó onde o pod do banco está agendado é indisponibilidade até o reagendamento e a remontagem do volume. SLA numérico: não definido. **Dívida conhecida:** o manifesto atual (`k8s/manifesto.yaml`) implanta **1 réplica** tanto da aplicação quanto do Postgres, sem spread por AZ nem PDB, e sem HA de banco — esta linha descreve o alvo de HA da aplicação (ADR 002), que segue valendo, não o comportamento real enquanto essas réplicas únicas estiverem no ar (change `manifesto-kubernetes`) |
+| Escalabilidade | Escala horizontal na **camada de pod** (múltiplas réplicas + HPA), aproveitando a natureza stateless da aplicação; execução em **Amazon EKS** com **Managed Node Groups** `t3.small` (x86), mínimo de **1 nó por AZ** em 3 AZs (ADR 002). Sob empilhamento de réplicas, o caminho é adicionar nós (escala horizontal), não verticalizar — os 2 GB do `t3.small` são partilhados entre overhead do EKS e os pods. Escalar a aplicação **não** escala o banco: o Postgres em `StatefulSet` é réplica única (ADR 003), primário único legível e teto de throughput de dados; mais réplicas × workers Gunicorn pressionam o `max_connections` do Postgres — mitigação por pool de conexões (ex.: pgbouncer) pendente e fora do escopo das ADRs. Autoscaling de nós (Cluster Autoscaler/Karpenter) ainda não decidido. Mantém-se o suporte a multiprocessing via Gunicorn, com métricas Prometheus em diretório multiproc (`PROMETHEUS_MULTIPROC_DIR`) (ADR 002) |
+| Segurança | Container executa como **usuário não-root**, reduzindo a superfície de ataque (ADR 001). Conectividade ao banco agora é intra-cluster via `Service` (ADR 003) — a premissa de rede cross-AZ para o RDS descrita originalmente na ADR 002 não se aplica mais. **Dívida conhecida (não endereçada pelas ADRs):** segredo de aplicação fixado no código-fonte. Demais controles: não definido |
+| Observabilidade | Logging estruturado em stdout (nível configurável via `LOG_LEVEL`) e métricas Prometheus expostas via `prometheus-flask-exporter`. Sinais de saúde e prontidão implementados conforme o PRD-0001 (change `endpoints-saude-prontidao`): `livenessProbe httpGet /health` (não toca o banco) e `readinessProbe httpGet /ready` (verifica a conectividade com o banco a cada consulta, com teto de tempo configurável por `READINESS_DB_TIMEOUT_SECONDS`, padrão 5s). A temporização das probes respeita `periodSeconds 10 > timeoutSeconds 6 > teto 5`. Ambos os endpoints ficam fora das métricas e do log de requisição, para que a cadência das probes não afogue o sinal de negócio |
 
 ## Dependências Externas
 
 | Serviço / Sistema | Tipo | Constraint relevante | Dono |
 |---|---|---|---|
-| PostgreSQL / Amazon RDS | Banco relacional gerenciado | Prod: RDS **Multi-AZ**, standby síncrono não-legível, failover automático, acesso cross-AZ (~1–2 ms) na 5432. Dev: PostgreSQL em container via Docker Compose. Conexão via `DATABASE_URL` (psycopg2). Primário único legível = teto de throughput; `max_connections` sob pressão com réplicas (pool pendente) | Time DevOps |
+| PostgreSQL | Banco relacional | Prod: PostgreSQL 16 em `StatefulSet` dentro do cluster EKS, com `PersistentVolumeClaim` (ADR 003, substitui o RDS Multi-AZ da ADR 002 original) — réplica única, sem failover automático nem backup gerenciado. Dev: PostgreSQL em container via Docker Compose. Conexão via `DATABASE_URL` (psycopg2), agora resolvendo um `Service` interno em vez de um endpoint RDS. Primário único legível = teto de throughput; `max_connections` sob pressão com réplicas da aplicação (pool pendente) | Time DevOps |
 | Amazon EKS | Plataforma de execução (Kubernetes) | Cluster novo dedicado, 3 AZs, Managed Node Groups `t3.small` x86 (≥1 nó/AZ); control plane e ciclo de vida dos nós sob operação própria | Time DevOps |
 | Docker Hub | Registry de imagens (privado) | Distribuição da imagem única; **publicação manual**; tag versionada + tag corrente para rastreabilidade; k8s exige credencial de pull | Time DevOps |
 | Prometheus | Sistema de métricas | Coleta de métricas expostas pela aplicação | Não definido |
@@ -136,4 +152,5 @@ Não há autenticação de usuário. A edição de um evento é controlada por u
 | # | Título | Data | Status | Link |
 |---|---|---|---|---|
 | 001 | Adotar containerização Docker para empacotamento e ambiente de desenvolvimento | 2026-07-12 | aceito | [ADR 001](./adrs/001-containerizacao-docker.md) |
-| 002 | Executar a aplicação em Amazon EKS (Managed Node Groups) com banco em Amazon RDS Multi-AZ | 2026-07-12 | aceito | [ADR 002](./adrs/002-plataforma-execucao-eks-rds.md) |
+| 002 | Executar a aplicação em Amazon EKS (Managed Node Groups) com banco em Amazon RDS Multi-AZ | 2026-07-12 | superseded por 003 (parte de banco) | [ADR 002](./adrs/002-plataforma-execucao-eks-rds.md) |
+| 003 | Banco de dados em PostgreSQL dentro do cluster (StatefulSet + PVC), substituindo o RDS | 2026-08-30 | aceito | [ADR 003](./adrs/003-banco-postgres-no-cluster.md) |

@@ -1,0 +1,21 @@
+schema: spec-driven
+
+context: |
+  [REVIEW] Encontros Tech — app web de gestão de eventos, arquitetura em camadas
+  (router → service → model); specs evoluem em openspec/specs/.
+  [PAPEL DOS DOCS] TRD (docs/trd.md) = verdade técnica global (stack · arquitetura
+  · RNFs · índice de ADRs) — consultar, não reescrever. ADRs (docs/adrs/*.md) =
+  decisões imutáveis (status: aceito) — referenciar, nunca reabrir. PRDs
+  (docs/*-prd-*.md) = comportamento em Dado/Quando/Então — critério de aceite.
+rules:
+  proposal:
+    - Incluir plano de rollback e mapear blast radius
+    - Sinalizar impacto em disponibilidade / HA
+  specs:
+    - Cobrir cenários de falha e borda, não só o caminho feliz
+    - Mapear o PRD de origem e os predicados cobertos
+  tasks:
+    - Cada task com comando de validação explícito
+    - Incluir uma task de verificação (gate) antes de prosseguir
+  design:
+    - Ancorar decisões nos ADRs aceitos e no TRD, sem reabrir ADR

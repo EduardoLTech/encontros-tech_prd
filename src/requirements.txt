@@ -11,6 +11,5 @@ python-dotenv==1.1.1
 PyYAML==6.0.2
 SQLAlchemy==2.0.43
 typing_extensions==4.15.0
-pytest==8.3.4
 Werkzeug==3.0.1
 prometheus-client==0.21.1

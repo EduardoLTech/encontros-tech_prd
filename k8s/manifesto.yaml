@@ -1,0 +1,296 @@
+# Manifesto Kubernetes — Encontros Tech
+#
+# Aplica-se em um único passo: `kubectl apply -f k8s/manifesto.yaml`.
+# Ordem dos documentos importa: o Namespace precisa vir antes de qualquer
+# recurso que o referencie (ver design.md, D1).
+#
+# O PostgreSQL roda dentro do próprio cluster (ADR 003, que substitui a
+# decisão de RDS da ADR 002): StatefulSet + PersistentVolumeClaim + Service,
+# neste mesmo arquivo.
+#
+# Pré-requisitos criados FORA deste arquivo, manualmente, no namespace
+# `encontros-tech` (ver design.md, D5):
+#   - Secret `encontros-tech-db-postgres` (chaves: POSTGRES_USER,
+#     POSTGRES_PASSWORD, POSTGRES_DB)   — consumido pelo StatefulSet do banco
+#   - Secret `encontros-tech-db`         (chave: DATABASE_URL)
+#     — consumido pela aplicação; deve apontar para
+#     postgres.encontros-tech.svc.cluster.local:5432 com as mesmas
+#     credenciais do secret acima
+#   - Secret `dockerhub-pull`            (dockerconfigjson do Docker Hub privado)
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: encontros-tech
+  labels:
+    app.kubernetes.io/name: encontros-tech
+    app.kubernetes.io/instance: encontros-tech
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: encontros-tech
+    app.kubernetes.io/managed-by: kubectl
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: encontros-tech
+  namespace: encontros-tech
+  labels:
+    app.kubernetes.io/name: encontros-tech
+    app.kubernetes.io/instance: encontros-tech
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: encontros-tech
+    app.kubernetes.io/managed-by: kubectl
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: encontros-tech
+  namespace: encontros-tech
+  labels:
+    app.kubernetes.io/name: encontros-tech
+    app.kubernetes.io/instance: encontros-tech
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: encontros-tech
+    app.kubernetes.io/managed-by: kubectl
+data:
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "simple"
+  SERVICE_NAME: "encontros-tech"
+  SERVICE_VERSION: "1.0.0"
+  PROMETHEUS_MULTIPROC_DIR: "/tmp/prometheus_multiproc"
+  GUNICORN_BIND: "0.0.0.0:8000"
+  GUNICORN_LOG_LEVEL: "info"
+  # Fixado explicitamente: sem isso o default do gunicorn.conf.py lê as CPUs
+  # do nó, não o limite de CPU do pod (ver design.md, D8).
+  GUNICORN_WORKERS: "2"
+  # Threads por worker (worker class gthread). Com workers sync, uma verificação
+  # de prontidão contra um banco pendurado ocuparia o worker inteiro e /health
+  # deixaria de ser respondido (PRD-0001 · I7).
+  GUNICORN_THREADS: "4"
+  # Teto de tempo da verificação de prontidão. Precisa ser menor que o
+  # timeoutSeconds da readinessProbe abaixo (PRD-0001 · R2.3).
+  READINESS_DB_TIMEOUT_SECONDS: "5"
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: encontros-tech
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/instance: encontros-tech
+    app.kubernetes.io/version: "16"
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: encontros-tech
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+      app.kubernetes.io/instance: encontros-tech
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/instance: encontros-tech
+        app.kubernetes.io/version: "16"
+        app.kubernetes.io/component: database
+        app.kubernetes.io/part-of: encontros-tech
+        app.kubernetes.io/managed-by: kubectl
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: encontros-tech-db-postgres
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - $(POSTGRES_USER)
+                - -d
+                - $(POSTGRES_DB)
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: encontros-tech
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/instance: encontros-tech
+    app.kubernetes.io/version: "16"
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: encontros-tech
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/instance: encontros-tech
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: encontros-tech
+  namespace: encontros-tech
+  labels:
+    app.kubernetes.io/name: encontros-tech
+    app.kubernetes.io/instance: encontros-tech
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: encontros-tech
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: encontros-tech
+      app.kubernetes.io/instance: encontros-tech
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: encontros-tech
+        app.kubernetes.io/instance: encontros-tech
+        app.kubernetes.io/version: "1.0.0"
+        app.kubernetes.io/component: backend
+        app.kubernetes.io/part-of: encontros-tech
+        app.kubernetes.io/managed-by: kubectl
+    spec:
+      serviceAccountName: encontros-tech
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: dockerhub-pull
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: teclinux/encontros-tech-prd:1.0.0
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: encontros-tech
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: encontros-tech-db
+                  key: DATABASE_URL
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          # periodSeconds > timeoutSeconds > READINESS_DB_TIMEOUT_SECONDS
+          # (10 > 6 > 5). Sem essa folga o kubelet encerraria a tentativa por
+          # timeout antes da resposta 503, levando junto o corpo de diagnóstico
+          # (PRD-0001 · P9.2/R2.3).
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 6
+            failureThreshold: 3
+          # /health não toca o banco: se não responde em 2s, o processo está de
+          # fato comprometido. Um valor generoso aqui atrasaria a detecção do que
+          # a liveness existe para detectar (PRD-0001 · R1/I3).
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "250m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: encontros-tech
+  namespace: encontros-tech
+  labels:
+    app.kubernetes.io/name: encontros-tech
+    app.kubernetes.io/instance: encontros-tech
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: encontros-tech
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: encontros-tech
+    app.kubernetes.io/instance: encontros-tech
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

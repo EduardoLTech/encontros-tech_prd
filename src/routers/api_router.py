@@ -1,4 +1,5 @@
 from flask import Blueprint, request, jsonify, abort
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import json
@@ -11,6 +12,37 @@ from core.logging import get_logger, log_business_event
 
 logger = get_logger("api_router")
 bp = Blueprint('api', __name__)
+
+
+class SerializationError(Exception):
+    """
+    Falha ao converter um registro do banco no schema de saída.
+
+    Deliberadamente **não** herda de ValueError. Os handlers de escrita mapeiam
+    ValueError para 400 ("payload inválido"), e a ValidationError do Pydantic é
+    subclasse de ValueError: sem um tipo próprio, um registro corrompido no banco
+    seria relatado ao cliente como erro *dele* (design D4).
+    """
+
+
+def serializar(db_event) -> dict:
+    """
+    Converte o objeto ORM devolvido pelo service no schema de saída.
+
+    A conversão vive aqui, e não no service, porque é o router que conhece o
+    formato de resposta — o page_router consome os mesmos objetos ORM direto nos
+    templates (design D1). `mode="json"` faz o `date` sair em ISO 8601, o mesmo
+    formato aceito na entrada; sem ele o jsonify do Flask emitiria RFC 822 e a
+    API devolveria um formato diferente do que aceita (D2).
+    """
+    try:
+        return Event.model_validate(db_event).model_dump(mode="json")
+    except ValidationError as e:
+        # O id vai no log porque é o que torna o 500 acionável: sem ele, o
+        # operador sabe que a listagem quebrou mas não qual linha a quebrou.
+        registro_id = getattr(db_event, "id", "desconhecido")
+        logger.error(f"Falha ao serializar evento id={registro_id}: {str(e)}")
+        raise SerializationError(f"evento id={registro_id}") from e
 
 @bp.route("/", methods=['POST'])
 def create_event():
@@ -31,8 +63,13 @@ def create_event():
                 "method": "API"
             })
             
-            return jsonify(result.model_dump())
-            
+            return jsonify(serializar(result))
+
+    except SerializationError as e:
+        # Antes do except ValueError: falha de conversão é problema do dado
+        # persistido, não do payload do cliente (D4).
+        logger.error(f"Erro ao serializar evento criado ({str(e)})")
+        abort(500, description="Erro interno do servidor")
     except ValueError as e:
         logger.warning(f"Erro de validação na criação do evento: {str(e)}")
         abort(400, description=f"Dados inválidos: {str(e)}")
@@ -60,8 +97,14 @@ def read_events():
                 "method": "API"
             })
             
-            return jsonify([event.model_dump() for event in events])
-            
+            # Tudo ou nada: um registro incompatível com o schema derruba a
+            # resposta inteira, em vez de produzir uma lista silenciosamente
+            # incompleta que o cliente tomaria por completa (D4).
+            return jsonify([serializar(event) for event in events])
+
+    except SerializationError as e:
+        logger.error(f"Erro ao serializar a listagem de eventos ({str(e)})")
+        abort(500, description="Erro interno do servidor")
     except Exception as e:
         logger.error(f"Erro ao listar eventos: {str(e)}")
         abort(500, description="Erro interno do servidor")
@@ -80,11 +123,14 @@ def get_event_by_token(edit_token: str):
                 "method": "API"
             })
             
-            return jsonify(result.model_dump())
-            
+            return jsonify(serializar(result))
+
     except EventNotFoundError:
         logger.warning(f"Evento não encontrado para token: {edit_token[:8]}...")
         abort(404, description="Event not found")
+    except SerializationError as e:
+        logger.error(f"Erro ao serializar evento buscado por token ({str(e)})")
+        abort(500, description="Erro interno do servidor")
     except Exception as e:
         logger.error(f"Erro ao buscar evento por token: {str(e)}")
         abort(500, description="Erro interno do servidor")
@@ -108,11 +154,14 @@ def update_event(edit_token: str):
                 "method": "API"
             })
             
-            return jsonify(result.model_dump())
-            
+            return jsonify(serializar(result))
+
     except EventNotFoundError:
         logger.warning(f"Evento não encontrado para atualização: {edit_token[:8]}...")
         abort(404, description="Event not found")
+    except SerializationError as e:
+        logger.error(f"Erro ao serializar evento atualizado ({str(e)})")
+        abort(500, description="Erro interno do servidor")
     except ValueError as e:
         logger.warning(f"Erro de validação na atualização: {str(e)}")
         abort(400, description=f"Dados inválidos: {str(e)}")

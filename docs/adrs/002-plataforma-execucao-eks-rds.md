@@ -1,12 +1,17 @@
 ---
 adr_number: "002"
-status: aceito
+status: superseded
 created: 2026-07-12
 supersedes: ""
-superseded_by: ""
+superseded_by: "003"
 ---
 
 # ADR 002: Executar a aplicação em Amazon EKS com Managed Node Groups e banco em Amazon RDS Multi-AZ
+
+> **Superseded por [ADR 003](003-banco-postgres-no-cluster.md):** a decisão de compute (EKS com
+> Managed Node Groups) permanece válida. A decisão de banco (RDS Multi-AZ, fora do cluster) foi
+> revertida — o Postgres passou a rodar dentro do cluster. Este documento fica como registro
+> histórico da decisão original e de por que o RDS foi escolhido primeiro.
 
 ## Contexto
 

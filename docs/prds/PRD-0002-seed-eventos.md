@@ -150,8 +150,41 @@ A feature é considerada "pronta" quando **todos** os itens abaixo são demonstr
 
 ---
 
-## Premissas a confirmar
+## Premissas — confirmadas
 
-1. **Catálogo inicial = os 10 eventos do `api-requests.http`** (P4).
-2. **Datas relativas ao "agora" caindo no futuro**, preservando a ordem/espaçamento aproximado do arquivo original (P6, I5).
-3. **Comportamento em tabela não-vazia é no-op silencioso de dados** (apenas loga), não erro — reexecução deve encerrar com sucesso (P2).
+Confirmadas na exploração e implementadas no change `seed-eventos-iniciais`.
+
+1. ✅ **Catálogo inicial = os 10 eventos do `api-requests.http`** (P4). Hardcoded no script; um teste
+   confere título, descrição e local de cada entrada contra o arquivo de origem.
+2. ✅ **Datas relativas ao "agora" caindo no futuro** (P6, I5), por **deslocamento em bloco**:
+   `agora + MARGEM + (data_original − data_original_mais_antiga)`. Preserva os intervalos reais entre
+   os eventos — de ~3 a ~16 dias — em vez de achatá-los numa distribuição uniforme. A `MARGEM` existe
+   porque, sem ela, o evento de data original mais antiga teria delta zero e cairia exatamente sobre o
+   instante da execução, já no passado quando a transação confirma.
+3. ✅ **Tabela não-vazia é no-op que encerra com sucesso** (P2), registrando o motivo em log. Código de
+   saída `0` tanto para "semeou" quanto para "ignorou": um pipeline não pode falhar porque o ambiente
+   já estava semeado.
+
+## Premissas adicionais fixadas na implementação
+
+4. **Execução serializada.** O script não é projetado para execução concorrente: a checagem
+   "tabela vazia → semeia" é *check-then-act*, e duas execuções simultâneas sobre tabela vazia
+   poderiam ambas inserir. Garantir a serialização é responsabilidade de quem invoca. Se um dia o seed
+   entrar num pipeline com jobs paralelos, o advisory lock do Postgres já usado em `core/schema.py` é
+   o caminho pronto para fechar a janela.
+5. **"Banco migrado" significa, hoje, "a aplicação subiu ao menos uma vez".** P9 assume o schema pronto
+   com a aplicação desligada, mas o projeto não tem mecanismo de migration independente do boot de
+   `main.py`. O script verifica a pré-condição e falha explicitamente; satisfazê-la continua sendo
+   passo do operador. Lacuna registrada para trilha própria.
+
+---
+
+## Nota de validação (2026-08-31)
+
+Os critérios CA1–CA5 e CA7–CA9 foram validados em containers. **CA6** foi validado pelo caminho HTML
+(listagem em `/` e edição em `/events/edit/<token>`); a verificação equivalente pela **API JSON** ficou
+bloqueada por um bug **pré-existente e independente do seed**: `src/routers/api_router.py` chama
+`model_dump()` sobre objetos ORM em vez do schema Pydantic, e os 4 endpoints de `/api/events` respondem
+500. Isso significa que o fluxo manual descrito na seção 1 deste documento — disparar os 10 `POST` do
+`api-requests.http` — **já não funciona**, o que reforça a motivação do seed. Endereçado em change
+próprio.

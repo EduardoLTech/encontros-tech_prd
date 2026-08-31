@@ -1,0 +1,39 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-encontros_tech}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-encontros_tech}
+      POSTGRES_DB: ${POSTGRES_DB:-encontros_tech}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-encontros_tech} -d ${POSTGRES_DB:-encontros_tech}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    image: teclinux/encontros-tech-prd:1.0.0
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-encontros_tech}:${POSTGRES_PASSWORD:-encontros_tech}@db:5432/${POSTGRES_DB:-encontros_tech}
+      GUNICORN_RELOAD: "true"
+      READINESS_DB_TIMEOUT_SECONDS: "${READINESS_DB_TIMEOUT_SECONDS:-5}"
+      GUNICORN_THREADS: "${GUNICORN_THREADS:-4}"
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - ./src:/app
+    # service_started, nao service_healthy: a aplicacao agora sobe com o banco
+    # indisponivel (PRD-0001 - P7), e o compose precisa permitir exercitar isso.
+    depends_on:
+      db:
+        condition: service_started
+
+volumes:
+  pgdata:

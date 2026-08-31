@@ -1,7 +1,7 @@
 # PRD — Health & Readiness Probes · Encontros Tech
 
 **Feature:** Sinais de saúde (`/health`) e prontidão (`/ready`)
-**Data:** 2026-07-12 · **Status:** Revisado — premissas confirmadas
+**Data:** 2026-07-12 · **Revisado em:** 2026-08-30 · **Status:** Revisado — premissas confirmadas
 **Escopo do documento:** comportamento e regra de negócio. Escolhas de implementação (biblioteca, comando de verificação do banco, configuração de probes, mecanismo de retry) são deliberadamente omitidas — pertencem ao ADR/TRD.
 
 ---
@@ -82,7 +82,17 @@ Então `/ready` passa a retornar 200 sem necessidade de reiniciar a aplicação.
 **P9 — Verificação de prontidão é limitada no tempo**
 Dado que o banco está inalcançável de forma a não responder,
 Quando `/ready` é consultado,
-Então a resposta é emitida em até 2 segundos, retornando 503, em vez de ficar pendurada aguardando o banco.
+Então a resposta é emitida dentro do teto de tempo configurado para a verificação — **5 segundos por padrão** —, retornando 503, em vez de ficar pendurada aguardando o banco.
+
+**P9.1 — Teto de tempo é configurável no deploy**
+Dado que o teto de tempo da verificação de prontidão é definido por variável de ambiente,
+Quando um operador ajusta esse valor e realiza um novo rollout,
+Então a verificação passa a respeitar o novo teto — sem novo rollout, permanece vigente o valor lido no início do processo.
+
+**P9.2 — O teto do app cabe na janela de avaliação do orquestrador**
+Dado o teto de tempo configurado para a verificação de prontidão,
+Quando o Kubernetes avalia a readiness de uma instância cujo banco está inalcançável,
+Então o orquestrador recebe a resposta 503 com o corpo de diagnóstico (P11), em vez de encerrar a tentativa por esgotamento da própria janela antes de a aplicação responder.
 
 **P10 — Sinais não alteram estado**
 Dado qualquer estado do sistema,
@@ -104,13 +114,17 @@ Então o corpo identifica qual dependência verificada está não-saudável (atu
 - **I4.** A indisponibilidade do banco nunca impede o processo de concluir seu boot.
 - **I5.** A consulta aos sinais nunca modifica o estado de negócio.
 - **I6.** O sinal de prontidão sempre reflete a capacidade **atual** de servir, avaliada no momento da consulta: se o banco está indisponível, `/ready` não pode reportar prontidão. Não se admite reportar prontidão com base em resultado defasado/reaproveitado.
+- **I7.** A verificação de prontidão nunca impede a aplicação de responder `/health`. A indisponibilidade do banco não pode, por consumo da capacidade de atendimento durante as verificações, converter-se em falha de vivacidade. *(Corolário de I2/R1 que se torna necessário na medida em que o teto de tempo da verificação cresce.)*
 
 ---
 
 ## 5. Restrições (de negócio / comportamento)
 
 - **R1.** A vivacidade não pode depender de nenhuma dependência externa — apenas do próprio processo. (Fazer o contrário transformaria uma falha transitória de dependência em reinícios em massa.)
-- **R2.** A verificação de prontidão deve concluir dentro de um limite curto de tempo (teto de 2s), para não estourar a janela de avaliação do orquestrador.
+- **R2.** A verificação de prontidão deve concluir dentro de um teto de tempo curto e explícito — **5 segundos por padrão** —, para não estourar a janela de avaliação do orquestrador.
+- **R2.1.** O teto deve ser parametrizável por variável de ambiente, aplicada **no momento do deploy**. Não há ajuste a quente: alterar o valor exige novo rollout das instâncias.
+- **R2.2.** O teto efetivo mínimo é de **2 segundos**. Valores configurados abaixo disso não são honrados pela camada de conexão com o banco e devem ser tratados como 2s (ver Nota técnica).
+- **R2.3.** A janela de avaliação da probe de readiness no orquestrador deve ser estritamente maior que o teto configurado no app; e o intervalo entre avaliações, maior que essa janela.
 - **R3.** As respostas de diagnóstico não podem expor dados de negócio, credenciais, segredos ou informações pessoais — apenas o estado das dependências verificadas.
 - **R4.** Os sinais devem ser observáveis sem autenticação, para que o orquestrador os consulte livremente.
 - **R5.** A prontidão considera atendida somente a dependência **banco de dados**. Nenhuma outra dependência é avaliada nesta feature (ver Fora do Escopo).
@@ -119,7 +133,8 @@ Então o corpo identifica qual dependência verificada está não-saudável (atu
 
 ## 6. Fora do escopo (com justificativa)
 
-- **F1. Configuração das probes no Kubernetes** (cadência, `initialDelay`, `failureThreshold`, `timeout`). *Porquê:* é parametrização de deployment/infra — decisão de ADR/TRD, não de produto.
+- **F1. Configuração das probes no Kubernetes** (cadência, `initialDelay`, `failureThreshold`). *Porquê:* é parametrização de deployment/infra — decisão de ADR/TRD, não de produto.
+  - **Exceção (revisão de 2026-08-30):** o **timeout da probe de readiness entra no escopo** desta feature. Ele deixou de ser parametrização independente ao passar a depender do teto de tempo da verificação (R2.3): se a janela do orquestrador for menor que o teto do app, o comportamento exigido em P4/P9/P11 não é observável — o orquestrador desiste antes de a aplicação responder o 503 com diagnóstico. Os demais parâmetros seguem fora do escopo.
 - **F2. Mecanismo técnico de verificação do banco e de inicialização resiliente** (como o banco é sondado, como o schema é criado sem bloquear o boot, retries). *Porquê:* é "como", não "o quê" — pertence ao ADR/TRD. O PRD só exige o comportamento observável (P7, P9).
 - **F3. Cache/reaproveitamento do resultado da verificação de prontidão entre consultas.** *Porquê:* é otimização de implementação; o PRD apenas limita a defasagem aceitável (I6).
 - **F4. Verificação de outras dependências** (cache, filas, serviços externos). *Porquê:* a aplicação hoje só depende criticamente do banco; adicionar checks especulativos aumentaria a superfície de falso-negativo sem valor de negócio atual.
@@ -134,18 +149,36 @@ Então o corpo identifica qual dependência verificada está não-saudável (atu
 A feature é considerada "pronta" quando **todos** os itens abaixo são demonstráveis:
 
 - **CA1.** Com o banco disponível: `/health` → 200 e `/ready` → 200 com corpo detalhando o banco como saudável. *(P1, P3)*
-- **CA2.** Derrubando o banco com a aplicação já no ar: `/health` permanece 200 e `/ready` passa a 503 com corpo detalhando o banco como não-saudável, em até 2s por resposta. *(P2, P4, P9)*
+- **CA2.** Derrubando o banco com a aplicação já no ar: `/health` permanece 200 e `/ready` passa a 503 com corpo detalhando o banco como não-saudável, dentro do teto configurado por resposta (5s no padrão). *(P2, P4, P9)*
 - **CA3.** Com `/ready` em 503, verifica-se que a instância deixou de receber tráfego novo e que o processo **não** foi reiniciado. *(P5, I1, I2)*
 - **CA4.** Religando o banco: `/ready` volta a 200 e a instância é readmitida ao tráfego automaticamente, sem reinício nem intervenção manual. *(P6, P8)*
 - **CA5.** Subindo a aplicação com o banco previamente indisponível: o processo completa o boot, `/health` responde 200 e `/ready` responde 503; ao disponibilizar o banco, `/ready` passa a 200 sem reinício. *(P7, P8, I4)*
 - **CA6.** Consultando os endpoints repetidamente, nenhum evento é criado/alterado/removido no banco. *(P10, I5)*
 - **CA7.** O corpo de `/ready` em falha identifica a dependência afetada sem vazar dados de negócio, credenciais ou informações pessoais. *(P11, R3)*
+- **CA8.** Ajustando a variável de ambiente do teto de tempo e realizando novo rollout: o tempo de resposta de `/ready` com o banco inalcançável passa a refletir o novo valor. Sem rollout, o valor anterior permanece vigente. *(P9.1, R2.1)*
+- **CA9.** Com o banco inalcançável, a resposta 503 de `/ready` — com o corpo de diagnóstico completo — é efetivamente recebida pelo orquestrador, sem ser interrompida por esgotamento da janela de avaliação da probe. *(P9.2, R2.3)*
+- **CA10.** Com o banco inalcançável e as probes rodando na cadência configurada por um período sustentado: `/health` continua respondendo 200 e o processo não é reiniciado — comprovando que as verificações de prontidão não consumiram a capacidade necessária para atender a vivacidade. *(I7, I2, R1)*
 
 ---
 
 ## Decisões confirmadas (2026-07-12)
 
 - **Corpo JSON:** `{"status": "ready"|"not_ready", "checks": {"database": "ok"|"down"}}` (P3/P4).
-- **Teto de tempo da verificação de prontidão:** 2s (P9/R2).
+- ~~**Teto de tempo da verificação de prontidão:** 2s (P9/R2).~~ — **revisado em 2026-08-30, ver abaixo.**
 - **Prontidão sempre fresca:** avaliada no momento da consulta, sem reaproveitar resultado defasado (I6).
 - **Endpoints sem autenticação** (R4).
+
+---
+
+## Revisão de decisões (2026-08-30)
+
+- **Teto de tempo da verificação de prontidão: 5 segundos como padrão**, substituindo os 2s fixos (P9/R2).
+- **Parametrização por variável de ambiente, aplicada no deploy** (P9.1/R2.1). Não há ajuste a quente — mudar o valor exige novo rollout.
+- **5s é padrão, não teto rígido.** A configuração pode elevá-lo. *Consequência assumida:* a garantia de tempo de P9 passa a ser relativa à configuração vigente, e não mais um número absoluto do produto — uma configuração excessiva degrada a utilidade da probe sem violar este PRD. Cabe ao TRD/ADR fixar a faixa considerada segura e o valor efetivamente aplicado no deploy.
+- **Piso efetivo de 2s** (R2.2) — imposto pela camada de conexão, não escolhido pelo produto (ver Nota técnica).
+- **O timeout da probe de readiness passa a integrar o escopo** desta feature, como exceção a F1 (P9.2/R2.3).
+- **Nova invariante I7:** a verificação de prontidão não pode, por consumo de capacidade de atendimento, provocar falha de vivacidade. Elevar o teto de 2s para 5s amplia a janela em que verificações lentas ocupam a capacidade da instância; I7 fixa o limite que essa ampliação não pode ultrapassar.
+
+### Nota técnica (contexto para o TRD — não é requisito)
+
+O piso de 2s não é uma escolha de produto: a camada de conexão do PostgreSQL trata o timeout de conexão em segundos inteiros e eleva silenciosamente qualquer valor menor que 2 para 2 — configurar 1s resulta em 2s na prática. Fica a cargo do TRD/ADR decidir como o teto total é repartido entre as fases da verificação — espera por conexão disponível, estabelecimento da conexão e execução da consulta de verificação — e como I7 é satisfeita dado o modelo de concorrência do servidor de aplicação.
