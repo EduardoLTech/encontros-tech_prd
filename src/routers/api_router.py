@@ -109,6 +109,41 @@ def read_events():
         logger.error(f"Erro ao listar eventos: {str(e)}")
         abort(500, description="Erro interno do servidor")
 
+@bp.route("/<int:event_id>", methods=['GET'])
+def get_event(event_id: int):
+    """
+    Busca um evento pelo id numérico.
+
+    Reaproveita `event_service.get_event`, o mesmo usado pela página de detalhe
+    (`/events/<int:event_id>`), e o `<int:>` segue a tipagem daquela rota: id não
+    numérico nem chega aqui, o roteamento do Flask já responde 404. O corpo de erro
+    é sempre a mensagem genérica — a exceção vai só para o log, nunca para o
+    cliente (docs/trd.md, "Error handling").
+    """
+    logger.info(f"API - Buscando evento por ID: {event_id}")
+
+    try:
+        with get_db() as db:
+            result = event_service.get_event(db=db, event_id=event_id)
+
+            log_business_event(logger, "API_EVENT_RETRIEVED_BY_ID", {
+                "event_id": result.id,
+                "title": result.title,
+                "method": "API"
+            })
+
+            return jsonify(serializar(result))
+
+    except EventNotFoundError:
+        logger.warning(f"Evento não encontrado para ID: {event_id}")
+        abort(404, description="Event not found")
+    except SerializationError as e:
+        logger.error(f"Erro ao serializar evento buscado por ID ({str(e)})")
+        abort(500, description="Erro interno do servidor")
+    except Exception as e:
+        logger.error(f"Erro ao buscar evento por ID: {str(e)}")
+        abort(500, description="Erro interno do servidor")
+
 @bp.route("/by-token/<edit_token>", methods=['GET'])
 def get_event_by_token(edit_token: str):
     logger.info(f"API - Buscando evento por token: {edit_token[:8]}...")

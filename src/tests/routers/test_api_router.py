@@ -59,6 +59,7 @@ def service():
         svc.create_event.return_value = evento_orm()
         svc.get_events.return_value = [evento_orm()]
         svc.get_event_by_token.return_value = evento_orm()
+        svc.get_event.return_value = evento_orm()
         svc.update_event.return_value = evento_orm()
         yield svc
 
@@ -341,3 +342,75 @@ def test_busca_sem_resultado_devolve_array_vazio(client, service):
 
     assert resposta.status_code == 200
     assert resposta.get_json() == []
+
+
+# --- Busca por id (`GET /api/events/<int:event_id>`) ----------------------
+#
+# Endpoint implementado sem change do OpenSpec, a pedido direto do usuário.
+# Reaproveita `event_service.get_event`, o mesmo da página de detalhe.
+
+def test_por_id_devolve_200_com_o_evento_serializado(client, service):
+    resposta = client.get("/api/events/1")
+
+    assert resposta.status_code == 200
+    assert resposta.get_json() == {
+        "id": 1,
+        "title": "Workshop: Introdução ao FastAPI",
+        "description": "Aprenda a criar APIs REST modernas com FastAPI.",
+        "date": "2026-02-15T19:00:00",
+        "location": "Centro de Convenções - São Paulo, SP",
+        "technologies": [],
+        "edit_token": "c19699f5-17cf-492d-a813-0d7f6508395b",
+    }
+    # O id chega ao service já convertido para int pelo `<int:>` da rota.
+    assert service.get_event.call_args.kwargs["event_id"] == 1
+
+
+def test_por_id_inexistente_devolve_404_sem_vazar_a_mensagem_da_excecao(client, service):
+    detalhe_interno = "SELECT events.id FROM events WHERE events.id = 999 -- linha ausente"
+    service.get_event.side_effect = EventNotFoundError(detalhe_interno)
+
+    resposta = client.get("/api/events/999")
+    corpo = resposta.get_data(as_text=True)
+
+    assert resposta.status_code == 404
+    assert "Event not found" in corpo
+    for termo in [detalhe_interno, "SELECT", "Traceback"]:
+        assert termo not in corpo
+
+
+def test_por_id_erro_interno_devolve_500_sem_vazar_informacao_sensivel(client, service):
+    service.get_event.side_effect = Exception(
+        "could not connect to postgresql://encontros_tech:senha_secreta@db:5432/encontros_tech"
+    )
+
+    resposta = client.get("/api/events/1")
+    corpo = resposta.get_data(as_text=True).lower()
+
+    assert resposta.status_code == 500
+    for termo in ["senha_secreta", "postgresql://", "traceback", "5432"]:
+        assert termo not in corpo
+
+
+def test_por_id_conversao_invalida_responde_500(client, service):
+    """D4: registro incompatível com o schema é culpa do servidor."""
+    service.get_event.return_value = evento_orm(title=None)
+
+    resposta = client.get("/api/events/1")
+
+    assert resposta.status_code == 500
+
+
+def test_por_id_nao_numerico_nao_chega_ao_service(client, service):
+    """Mesma tipagem `<int:>` da página de detalhe: o roteamento já responde 404."""
+    resposta = client.get("/api/events/abc")
+
+    assert resposta.status_code == 404
+    service.get_event.assert_not_called()
+
+
+def test_por_id_emite_evento_de_negocio(client, service):
+    with patch.object(api_router, "log_business_event") as log:
+        client.get("/api/events/1")
+
+    assert [chamada.args[1] for chamada in log.call_args_list] == ["API_EVENT_RETRIEVED_BY_ID"]

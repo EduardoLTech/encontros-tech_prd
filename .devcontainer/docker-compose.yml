@@ -1,0 +1,47 @@
+# Compose exclusivo do dev container. Independente do docker-compose.yml da
+# raiz: projeto, rede e volume do banco proprios, para nao misturar dados.
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    volumes:
+      - ..:/workspaces/encontros-tech_prd:cached
+    # O container fica de pe esperando o editor; a aplicacao e iniciada a mao
+    # dentro dele (gunicorn), como num terminal local.
+    command: sleep infinity
+    environment:
+      DATABASE_URL: postgresql://encontros_tech:encontros_tech@db:5432/encontros_tech
+      DEBUG: "true"
+      GUNICORN_RELOAD: "true"
+      GUNICORN_WORKERS: "2"
+      GUNICORN_THREADS: "4"
+      READINESS_DB_TIMEOUT_SECONDS: "5"
+    # Publicado so em 127.0.0.1: a app fica acessivel do host sem expor a rede.
+    # Conflita com o compose da raiz se os dois estiverem no ar.
+    ports:
+      - "127.0.0.1:8000:8000"
+    # service_started, nao service_healthy: a app sobe com o banco fora
+    # (PRD-0001 - P7/I4), e o ambiente de dev precisa permitir exercitar isso.
+    depends_on:
+      db:
+        condition: service_started
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: encontros_tech
+      POSTGRES_PASSWORD: encontros_tech
+      POSTGRES_DB: encontros_tech
+    volumes:
+      - pgdata-dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U encontros_tech -d encontros_tech"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    # Sem ports: o banco so e alcancavel pela rede interna do compose.
+
+volumes:
+  pgdata-dev:

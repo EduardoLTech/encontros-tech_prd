@@ -1,0 +1,29 @@
+{
+  "name": "Encontros Tech (dev)",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/encontros-tech_prd",
+  "shutdownAction": "stopCompose",
+  "remoteUser": "vscode",
+
+  // O bind mount vindo do Windows tem outro dono; sem isso o git recusa o repo.
+  "postStartCommand": "git config --global --add safe.directory ${containerWorkspaceFolder}",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "humao.rest-client"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        // Os testes rodam a partir de src/; da raiz a coleta falha com
+        // "No module named 'core'" (AGENTS.md).
+        "python.testing.pytestEnabled": true,
+        "python.testing.cwd": "${workspaceFolder}/src",
+        "python.testing.pytestArgs": ["tests"]
+      }
+    }
+  }
+}
